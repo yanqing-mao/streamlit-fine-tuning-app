@@ -9,8 +9,12 @@ Original file is located at
 
 import streamlit as st
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
+from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments,TrainerCallback
 import torch
+import os
+
+# Ensure model and inputs use CPU
+device = torch.device("cpu")
 
 # Title
 st.title("Fine-Tuning GPT-2 with Streamlit")
@@ -68,16 +72,53 @@ def get_model(model_name):
     model.resize_token_embeddings(len(tokenizer))
     return model
 
-model = get_model(model_name)
+model = get_model(model_name).to(device)  # Ensure the model is on CPU
 
 # Training Arguments
+# training_args = TrainingArguments(
+#     output_dir="./results",
+#     evaluation_strategy="epoch",
+#     learning_rate=2e-5,
+#     weight_decay=0.01,
+#     logging_dir='./logs',
+# )
+output_dir = "./results"
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+
 training_args = TrainingArguments(
-    output_dir="./results",
+    output_dir=output_dir,
     evaluation_strategy="epoch",
-    learning_rate=2e-5,
-    weight_decay=0.01,
     logging_dir='./logs',
+    logging_steps=10,  # Log every 10 steps
+    per_device_train_batch_size=4,
+    per_device_eval_batch_size=4,
+    num_train_epochs=1,
+    report_to="none"  # Turn off built-in logging to WandB or Tensorboard for simplicity
 )
+
+# Custom callback to capture logs
+class StreamlitCallback(TrainerCallback):
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is not None:
+            st.write(f"Step {state.global_step}: {logs}")
+
+
+# Train Button
+# if st.button("Start Fine-Tuning"):
+#     st.write("Fine-tuning model...")
+
+#     trainer = Trainer(
+#         model=model,
+#         args=training_args,
+#         train_dataset=lm_datasets["train"].select(range(500)),  # Reduce dataset size for quicker training
+#         eval_dataset=lm_datasets["validation"].select(range(100)),
+#     )
+
+#     trainer.train()
+#     st.write("Training Complete.")
+
 
 # Train Button
 if st.button("Start Fine-Tuning"):
@@ -88,11 +129,26 @@ if st.button("Start Fine-Tuning"):
         args=training_args,
         train_dataset=lm_datasets["train"].select(range(500)),  # Reduce dataset size for quicker training
         eval_dataset=lm_datasets["validation"].select(range(100)),
+        callbacks=[StreamlitCallback()]  # Add the custom Streamlit callback here
     )
 
     trainer.train()
+    model.to(device)  # Ensure model stays on CPU after training
     st.write("Training Complete.")
+
+
 
 # Display Logs
 st.write("Model Training Logs Will Appear Here...")
+
+
+# Let users test the model
+st.header("Generate Text with Fine-Tuned Model")
+input_text = st.text_input("Enter a prompt for the model:", "")
+if input_text:
+    inputs = tokenizer.encode(input_text, return_tensors="pt")
+    outputs = model.generate(inputs, max_length=100, do_sample=True, top_k=50)
+    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    st.write("Generated Text:")
+    st.write(generated_text)
 
